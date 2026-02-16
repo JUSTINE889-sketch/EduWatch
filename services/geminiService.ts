@@ -2,24 +2,36 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { IncidentType, Priority } from "../types";
 
-// Fixed: Correct initialization of GoogleGenAI using named parameter and process.env.API_KEY directly.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Safety check for browser environment where process.env might not exist
+const getApiKey = () => {
+  try {
+    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+      return process.env.API_KEY;
+    }
+    return "";
+  } catch (e) {
+    return "";
+  }
+};
+
+const apiKey = getApiKey();
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const getWellnessTip = async () => {
-  if (!process.env.API_KEY) return "Take a deep breath. You're doing better than you think.";
+  if (!ai) return "Take a deep breath. You're doing better than you think.";
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: "Generate a one-sentence, highly supportive and professional wellness tip or inspirational quote for a high school student. It should be compassionate and focus on mental resilience.",
     });
-    return response.text;
+    return response.text || "Every step forward is progress.";
   } catch (error) {
     return "Remember that your school community is here to support you.";
   }
 };
 
 export const analyzeIncident = async (description: string, type: IncidentType) => {
-  if (!process.env.API_KEY) return null;
+  if (!ai) return null;
 
   try {
     const response = await ai.models.generateContent({
@@ -41,12 +53,13 @@ export const analyzeIncident = async (description: string, type: IncidentType) =
             concerns: { type: Type.ARRAY, items: { type: Type.STRING } },
             nextSteps: { type: Type.ARRAY, items: { type: Type.STRING } },
             summary: { type: Type.STRING }
-          }
+          },
+          required: ["suggestedPriority", "concerns", "nextSteps", "summary"]
         }
       }
     });
 
-    return JSON.parse(response.text);
+    return JSON.parse(response.text || "{}");
   } catch (error) {
     console.error("AI Analysis failed:", error);
     return null;
@@ -54,13 +67,13 @@ export const analyzeIncident = async (description: string, type: IncidentType) =
 };
 
 export const translateText = async (text: string, targetLanguage: string) => {
-  if (!process.env.API_KEY) return text;
+  if (!ai) return text;
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Translate the following text into ${targetLanguage}. Maintain the professional and compassionate tone. Only return the translated text: "${text}"`,
     });
-    return response.text;
+    return response.text || text;
   } catch (error) {
     console.error("Translation failed:", error);
     return text;
@@ -68,7 +81,7 @@ export const translateText = async (text: string, targetLanguage: string) => {
 };
 
 export const getResourceRecommendation = async (userMood: number, recentIncidents: string[]) => {
-  if (!process.env.API_KEY) return null;
+  if (!ai) return null;
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -87,18 +100,19 @@ export const getResourceRecommendation = async (userMood: number, recentIncident
           properties: {
             recommendedResource: { type: Type.STRING },
             reason: { type: Type.STRING }
-          }
+          },
+          required: ["recommendedResource", "reason"]
         }
       }
     });
-    return JSON.parse(response.text);
+    return JSON.parse(response.text || "{}");
   } catch (error) {
     return null;
   }
 };
 
 export const findPatterns = async (currentIncident: string, historySummaries: string[]) => {
-  if (!process.env.API_KEY || historySummaries.length === 0) return null;
+  if (!ai || historySummaries.length === 0) return null;
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -113,14 +127,15 @@ export const findPatterns = async (currentIncident: string, historySummaries: st
           type: Type.OBJECT,
           properties: {
             isPattern: { type: Type.BOOLEAN },
-            confidence: { type: Type.NUMBER, description: "0 to 1" },
+            confidence: { type: Type.NUMBER },
             finding: { type: Type.STRING },
             recommendation: { type: Type.STRING }
-          }
+          },
+          required: ["isPattern", "finding", "recommendation"]
         }
       }
     });
-    return JSON.parse(response.text);
+    return JSON.parse(response.text || "{}");
   } catch (error) {
     console.error("Pattern detection failed:", error);
     return null;
@@ -128,7 +143,7 @@ export const findPatterns = async (currentIncident: string, historySummaries: st
 };
 
 export const getChatAssistantResponse = async (history: { role: 'user' | 'model', parts: { text: string }[] }[]) => {
-  if (!process.env.API_KEY) return "I'm sorry, my AI processing is currently unavailable. Please contact the Guidance Office directly.";
+  if (!ai) return "I'm sorry, my AI processing is currently unavailable. Please contact the Guidance Office directly.";
 
   try {
     const chat = ai.chats.create({
@@ -148,7 +163,7 @@ export const getChatAssistantResponse = async (history: { role: 'user' | 'model'
 
     const lastMsg = history[history.length - 1].parts[0].text;
     const result = await chat.sendMessage({ message: lastMsg });
-    return result.text;
+    return result.text || "I'm listening. Please tell me more.";
   } catch (error) {
     console.error("Chat failed:", error);
     return "I'm having a bit of trouble connecting right now. Take a deep breath, and remember that our human staff are always here to help in the Guidance Office.";
