@@ -1,105 +1,187 @@
 
-import { User, UserRole, IncidentReport, IncidentStatus, IncidentType, Priority, ActivityLog, SystemAlert, MoodEntry, IncidentCategory } from '../types';
+import { createClient } from '@supabase/supabase-js';
+import { User, UserRole, IncidentReport, IncidentStatus, IncidentType, Priority, ActivityLog, SystemAlert, MoodEntry, IncidentCategory, AlertType } from '../types';
 
-const STORAGE_KEYS = {
-  USERS: 'eduwatch_users',
-  INCIDENTS: 'eduwatch_incidents',
-  LOGS: 'eduwatch_logs',
-  SESSION: 'eduwatch_session',
-  ALERTS: 'eduwatch_alerts',
-  MOODS: 'eduwatch_moods'
-};
+const supabaseUrl = 'https://mryvfqmmxdovjjuqkzmz.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1yeXZmcW1teGRvdmpqdXFrem16Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NjgzMDgsImV4cCI6MjA4NjI0NDMwOH0.k63mhsRRyQ5Qcgknet5-LHTIFXGIU9K4VlDrMXR__2Y';
 
-const getStorage = <T,>(key: string, initial: T): T => {
-  const data = localStorage.getItem(key);
-  return data ? JSON.parse(data) : initial;
-};
-
-const setStorage = <T,>(key: string, data: T) => {
-  localStorage.setItem(key, JSON.stringify(data));
-};
-
-const defaultUsers: User[] = [
-  { id: '1', email: 'admin@school.edu', role: UserRole.ADMIN, fullName: 'Super Admin', isApproved: true },
-  { id: '2', email: 'guidance@school.edu', role: UserRole.GUIDANCE, fullName: 'Ms. Sarah Connor', isApproved: true },
-  { id: '3', email: 'teacher@school.edu', role: UserRole.TEACHER, fullName: 'Mr. John Wick', isApproved: true },
-];
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export const dbService = {
-  getUsers: (): User[] => getStorage(STORAGE_KEYS.USERS, defaultUsers),
+  // Profiles / Users
+  getUsers: async (): Promise<User[]> => {
+    const { data, error } = await supabase.from('profiles').select('*');
+    if (error) throw error;
+    return data.map(u => ({
+      id: u.id,
+      email: u.email,
+      fullName: u.full_name,
+      role: u.role as UserRole,
+      isApproved: u.is_approved,
+      avatarUrl: u.avatar_url
+    }));
+  },
   
-  addUser: (user: User) => {
-    const users = dbService.getUsers();
-    setStorage(STORAGE_KEYS.USERS, [...users, user]);
+  addUser: async (user: Omit<User, 'id'>) => {
+    const { data, error } = await supabase.from('profiles').insert([{
+      email: user.email,
+      full_name: user.fullName,
+      role: user.role,
+      is_approved: user.isApproved
+    }]).select();
+    if (error) throw error;
+    return data[0];
   },
 
-  getIncidents: (): IncidentReport[] => getStorage(STORAGE_KEYS.INCIDENTS, []),
+  approveUser: async (userId: string) => {
+    const { error } = await supabase.from('profiles').update({ is_approved: true }).eq('id', userId);
+    if (error) throw error;
+  },
+
+  // Incidents
+  getIncidents: async (): Promise<IncidentReport[]> => {
+    const { data, error } = await supabase
+      .from('incidents')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    return data.map(inc => ({
+      id: inc.id,
+      reporterId: inc.reporter_id,
+      studentName: inc.student_name,
+      grade: inc.grade,
+      section: inc.section,
+      category: inc.category as IncidentCategory,
+      incidentType: inc.incident_type as IncidentType,
+      location: inc.location,
+      description: inc.description,
+      date: inc.incident_date,
+      status: inc.status as IncidentStatus,
+      priority: inc.priority as Priority,
+      aiAnalysis: inc.ai_analysis ? JSON.stringify(inc.ai_analysis) : undefined,
+      internalNotes: inc.internal_notes,
+      evidencePhotos: inc.evidence_photos,
+      createdAt: inc.created_at
+    }));
+  },
   
-  saveIncident: (incident: Omit<IncidentReport, 'id' | 'createdAt' | 'status'>): IncidentReport => {
-    const incidents = dbService.getIncidents();
-    const newIncident: IncidentReport = {
-      ...incident,
-      id: Math.random().toString(36).substr(2, 9),
-      createdAt: new Date().toISOString(),
+  saveIncident: async (incident: Omit<IncidentReport, 'id' | 'createdAt' | 'status'>): Promise<IncidentReport> => {
+    const payload = {
+      reporter_id: incident.reporterId && incident.reporterId.length > 20 ? incident.reporterId : null, // Handle real UUIDs
+      student_name: incident.studentName,
+      grade: incident.grade,
+      section: incident.section,
+      category: incident.category || IncidentCategory.DISCIPLINE,
+      incident_type: incident.incidentType,
+      location: incident.location,
+      description: incident.description,
+      incident_date: incident.date,
+      priority: incident.priority,
+      ai_analysis: incident.aiAnalysis ? JSON.parse(incident.aiAnalysis) : null,
+      evidence_photos: incident.evidencePhotos || [],
       status: IncidentStatus.PENDING,
-      category: incident.category || IncidentCategory.DISCIPLINE // Default to Discipline if not provided
+      internal_notes: []
     };
-    setStorage(STORAGE_KEYS.INCIDENTS, [newIncident, ...incidents]);
-    dbService.logActivity('System', 'Report Submitted', newIncident.id);
-    return newIncident;
+
+    const { data, error } = await supabase.from('incidents').insert([payload]).select();
+    if (error) throw error;
+    
+    const saved = data[0];
+    await dbService.logActivity(incident.reporterId || 'Anonymous', 'Report Submitted', saved.id);
+    
+    return {
+      ...incident,
+      id: saved.id,
+      createdAt: saved.created_at,
+      status: IncidentStatus.PENDING
+    };
   },
 
-  updateIncident: (id: string, updates: Partial<IncidentReport>) => {
-    const incidents = dbService.getIncidents();
-    const updated = incidents.map(inc => inc.id === id ? { ...inc, ...updates } : inc);
-    setStorage(STORAGE_KEYS.INCIDENTS, updated);
+  updateIncident: async (id: string, updates: Partial<IncidentReport>) => {
+    const dbUpdates: any = {};
+    if (updates.status) dbUpdates.status = updates.status;
+    if (updates.priority) dbUpdates.priority = updates.priority;
+    if (updates.internalNotes) dbUpdates.internal_notes = updates.internalNotes;
+
+    const { error } = await supabase.from('incidents').update(dbUpdates).eq('id', id);
+    if (error) throw error;
   },
 
-  logActivity: (userName: string, action: string, targetId: string) => {
-    const logs = getStorage<ActivityLog[]>(STORAGE_KEYS.LOGS, []);
-    const newLog: ActivityLog = {
-      id: Date.now().toString(),
-      userId: 'system',
-      userName,
+  // Activity Logs
+  logActivity: async (userName: string, action: string, targetId: string) => {
+    // Attempt to link to a real user profile if we have one in logs
+    const { error } = await supabase.from('activity_logs').insert([{
+      user_name: userName,
+      user_id: '00000000-0000-0000-0000-000000000001', // Default to admin for system logs
       action,
-      targetId,
-      timestamp: new Date().toISOString()
-    };
-    setStorage(STORAGE_KEYS.LOGS, [newLog, ...logs].slice(0, 100));
+      target_id: targetId
+    }]);
+    if (error) console.error('Log failed:', error);
   },
 
-  getLogs: (): ActivityLog[] => getStorage(STORAGE_KEYS.LOGS, []),
-
-  approveUser: (userId: string) => {
-    const users = dbService.getUsers();
-    setStorage(STORAGE_KEYS.USERS, users.map(u => u.id === userId ? { ...u, isApproved: true } : u));
+  getLogs: async (): Promise<ActivityLog[]> => {
+    const { data, error } = await supabase
+      .from('activity_logs')
+      .select('*')
+      .order('timestamp', { ascending: false })
+      .limit(50);
+    
+    if (error) throw error;
+    return data.map(log => ({
+      id: log.id,
+      userId: log.user_id,
+      userName: log.user_name,
+      action: log.action,
+      targetId: log.target_id,
+      timestamp: log.timestamp
+    }));
   },
 
-  // Alerts Methods
-  getAlerts: (): SystemAlert[] => getStorage(STORAGE_KEYS.ALERTS, []),
+  // Alerts
+  getAlerts: async (): Promise<SystemAlert[]> => {
+    const { data, error } = await supabase.from('system_alerts').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return data.map(a => ({
+      id: a.id,
+      message: a.message,
+      type: a.type as AlertType,
+      createdAt: a.created_at
+    }));
+  },
   
-  addAlert: (alert: Omit<SystemAlert, 'id' | 'createdAt'>) => {
-    const alerts = dbService.getAlerts();
-    const newAlert = { ...alert, id: Date.now().toString(), createdAt: new Date().toISOString() };
-    setStorage(STORAGE_KEYS.ALERTS, [newAlert, ...alerts]);
+  addAlert: async (alert: Omit<SystemAlert, 'id' | 'createdAt'>) => {
+    const { error } = await supabase.from('system_alerts').insert([{
+      message: alert.message,
+      type: alert.type
+    }]);
+    if (error) throw error;
   },
 
-  removeAlert: (id: string) => {
-    const alerts = dbService.getAlerts();
-    setStorage(STORAGE_KEYS.ALERTS, alerts.filter(a => a.id !== id));
+  removeAlert: async (id: string) => {
+    const { error } = await supabase.from('system_alerts').delete().eq('id', id);
+    if (error) throw error;
   },
 
-  // Mood Methods
-  getMoods: (): MoodEntry[] => getStorage(STORAGE_KEYS.MOODS, []),
+  // Moods
+  getMoods: async (): Promise<MoodEntry[]> => {
+    const { data, error } = await supabase.from('mood_entries').select('*').order('timestamp', { ascending: false });
+    if (error) throw error;
+    return data.map(m => ({
+      id: m.id,
+      userId: m.user_id,
+      moodValue: m.mood_value,
+      timestamp: m.timestamp
+    }));
+  },
   
-  logMood: (userId: string, moodValue: number) => {
-    const moods = dbService.getMoods();
-    const newMood: MoodEntry = {
-      id: Date.now().toString(),
-      userId,
-      moodValue,
-      timestamp: new Date().toISOString()
-    };
-    setStorage(STORAGE_KEYS.MOODS, [...moods, newMood]);
+  logMood: async (userId: string, moodValue: number) => {
+    // Check if user ID is a UUID, otherwise use the system default
+    const validUserId = userId.length > 20 ? userId : '00000000-0000-0000-0000-000000000001';
+    const { error } = await supabase.from('mood_entries').insert([{
+      user_id: validUserId,
+      mood_value: moodValue
+    }]);
+    if (error) throw error;
   }
 };

@@ -6,8 +6,14 @@ import { SystemAlert, AlertType } from '../types';
 const AlertBanner: React.FC = () => {
   const [alerts, setAlerts] = useState<SystemAlert[]>([]);
 
-  const refreshAlerts = () => {
-    setAlerts(dbService.getAlerts());
+  // Fixed: Made refreshAlerts async to handle Promise returned by dbService.getAlerts()
+  const refreshAlerts = async () => {
+    try {
+      const data = await dbService.getAlerts();
+      setAlerts(data);
+    } catch (error) {
+      console.error("Failed to refresh alerts:", error);
+    }
   };
 
   useEffect(() => {
@@ -42,8 +48,8 @@ const AlertBanner: React.FC = () => {
             <span>{alert.type === AlertType.EMERGENCY ? 'EMERGENCY ALERT: ' : 'NOTICE: '} {alert.message}</span>
           </div>
           <button 
-            onClick={() => {
-              dbService.removeAlert(alert.id);
+            onClick={async () => {
+              await dbService.removeAlert(alert.id);
               refreshAlerts();
             }}
             className="opacity-70 hover:opacity-100 transition-opacity p-1"

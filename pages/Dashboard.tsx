@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { User, IncidentStatus, IncidentType, IncidentLocation, UserRole, Priority, IncidentCategory, IncidentReport } from '../types';
+import { User, IncidentStatus, IncidentType, IncidentLocation, UserRole, Priority, IncidentCategory, IncidentReport, MoodEntry, ActivityLog } from '../types';
 import { dbService } from '../services/dbService';
 import { getWellnessTip } from '../services/geminiService';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
@@ -12,11 +12,13 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const navigate = useNavigate();
-  const incidents = useMemo(() => dbService.getIncidents(), []);
-  const [moods, setMoods] = useState(dbService.getMoods());
+  const [incidents, setIncidents] = useState<IncidentReport[]>([]);
+  const [moods, setMoods] = useState<MoodEntry[]>([]);
+  const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [hasCheckedIn, setHasCheckedIn] = useState(false);
   const [wellnessTip, setWellnessTip] = useState<string>('Loading supportive thoughts...');
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [isLoading, setIsLoading] = useState(true);
   
   // Quick Action Modal State
   const [activeQuickAction, setActiveQuickAction] = useState<{type: IncidentCategory, label: string} | null>(null);
@@ -30,14 +32,31 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       setWellnessTip(tip);
     };
     fetchTip();
-    return () => clearInterval(timer);
-  }, []);
 
-  useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    const userMoodToday = moods.find(m => m.userId === user.id && m.timestamp.startsWith(today));
-    if (userMoodToday) setHasCheckedIn(true);
-  }, [moods, user.id]);
+    const loadData = async () => {
+      try {
+        const [incData, moodData, logData] = await Promise.all([
+          dbService.getIncidents(),
+          dbService.getMoods(),
+          dbService.getLogs()
+        ]);
+        setIncidents(incData);
+        setMoods(moodData);
+        setLogs(logData.slice(0, 4));
+        
+        const today = new Date().toISOString().split('T')[0];
+        const userMoodToday = moodData.find(m => m.userId === user.id && m.timestamp.startsWith(today));
+        if (userMoodToday) setHasCheckedIn(true);
+      } catch (err) {
+        console.error("Failed to load dashboard data", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadData();
+
+    return () => clearInterval(timer);
+  }, [user.id]);
 
   const userRequests = useMemo(() => {
     return incidents.filter(i => 
@@ -46,11 +65,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     ).slice(0, 3);
   }, [incidents, user.id]);
 
-  const logs = useMemo(() => dbService.getLogs().slice(0, 4), []);
-
-  const handleMoodCheckIn = (value: number) => {
-    dbService.logMood(user.id, value);
-    setMoods(dbService.getMoods());
+  const handleMoodCheckIn = async (value: number) => {
+    await dbService.logMood(user.id, value);
+    const newMoods = await dbService.getMoods();
+    setMoods(newMoods);
     setHasCheckedIn(true);
   };
   
@@ -107,8 +125,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       reporterId: user.id,
     };
 
-    dbService.saveIncident(request);
-    await new Promise(r => setTimeout(r, 800));
+    await dbService.saveIncident(request);
+    const updatedIncidents = await dbService.getIncidents();
+    setIncidents(updatedIncidents);
     
     setIsSubmitting(false);
     setActiveQuickAction(null);
@@ -132,9 +151,18 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
   const isStaff = user.role === UserRole.ADMIN || user.role === UserRole.GUIDANCE || user.role === UserRole.TEACHER;
 
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <p className="text-slate-500 font-medium">Connecting to EduWatch Cloud...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-700">
-      {/* Personalized High-End Header */}
+      {/* Personalized Header */}
       <header className="flex flex-col md:flex-row md:justify-between md:items-center gap-6 pb-6 border-b border-slate-200">
         <div>
           <div className="flex items-center space-x-2 text-blue-600 font-bold text-xs uppercase tracking-[0.2em] mb-1">
@@ -151,21 +179,15 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             <span className="text-2xl font-mono font-bold text-slate-800">{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">School Local Time</span>
           </div>
-          {isStaff && (
-             <div className="hidden lg:flex items-center space-x-2 bg-green-50 px-4 py-2 rounded-xl border border-green-100">
-               <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-               <span className="text-xs font-bold text-green-700">Guidance Office Open</span>
-             </div>
-          )}
         </div>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
-        {/* LEFT COLUMN - Primary Actions / Stats */}
+        {/* LEFT COLUMN */}
         <div className="lg:col-span-8 space-y-8">
           
-          {/* Wellness Tip - Compassionate UX */}
+          {/* Wellness Tip */}
           {!isStaff && (
             <div className="bg-white p-6 rounded-3xl border border-blue-50 shadow-xl shadow-blue-50/40 relative overflow-hidden group">
               <div className="flex items-start space-x-4 relative z-10">
@@ -177,7 +199,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                   <p className="text-slate-700 font-medium italic">"{wellnessTip}"</p>
                 </div>
               </div>
-              <div className="absolute -right-8 -bottom-8 w-32 h-32 bg-blue-50 rounded-full blur-2xl group-hover:scale-125 transition-transform duration-1000"></div>
             </div>
           )}
 
@@ -202,38 +223,6 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                   ))}
                 </div>
               </div>
-              <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-20 -mt-20 blur-3xl"></div>
-            </div>
-          )}
-
-          {/* Student Quick Actions */}
-          {!isStaff && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <button 
-                onClick={() => setActiveQuickAction({type: IncidentCategory.COUNSELING, label: 'Meeting with Counselor'})}
-                className="flex items-center p-6 bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all text-left group"
-              >
-                <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mr-5 group-hover:bg-indigo-600 group-hover:text-white transition-all duration-300">
-                  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" /></svg>
-                </div>
-                <div>
-                  <div className="font-bold text-slate-900 text-lg leading-none mb-1">Chat with Guidance</div>
-                  <div className="text-xs text-slate-500 font-medium">Request a private 1-on-1 talk.</div>
-                </div>
-              </button>
-              
-              <button 
-                onClick={() => setActiveQuickAction({type: IncidentCategory.WELFARE, label: 'Peer Welfare Check'})}
-                className="flex items-center p-6 bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all text-left group"
-              >
-                <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mr-5 group-hover:bg-rose-600 group-hover:text-white transition-all duration-300">
-                  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                </div>
-                <div>
-                  <div className="font-bold text-slate-900 text-lg leading-none mb-1">Flag a Concern</div>
-                  <div className="text-xs text-slate-500 font-medium">Securely report a friend's welfare.</div>
-                </div>
-              </button>
             </div>
           )}
 
@@ -263,7 +252,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             </div>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={stats.wellnessTrend}>
+                <AreaChart data={wellnessTrendData(moods)}>
                   <defs>
                     <linearGradient id="colorMood" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
@@ -284,10 +273,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
           </div>
         </div>
 
-        {/* RIGHT COLUMN - Tracking / AI Alerts */}
+        {/* RIGHT COLUMN */}
         <div className="lg:col-span-4 space-y-8">
-          
-          {/* Tracking Widget */}
           {!isStaff ? (
             <div className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col h-full">
               <div className="flex items-center justify-between mb-6">
@@ -309,45 +296,28 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                     <div className="text-[10px] text-slate-400 font-bold">{new Date(req.createdAt).toLocaleDateString()}</div>
                   </div>
                 ))}
-                {userRequests.length === 0 && (
-                  <div className="text-center py-12 flex flex-col items-center">
-                    <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center text-slate-300 mb-4">
-                       <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    </div>
-                    <p className="text-xs text-slate-400 font-medium">No active support requests.</p>
-                  </div>
-                )}
               </div>
             </div>
           ) : (
             <>
-              {/* Staff View: Early Warning Alerts */}
+              {/* Early Warning Alerts */}
               <div className="bg-white p-8 rounded-[2rem] border border-rose-100 shadow-xl shadow-rose-50/40">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-sm font-bold text-rose-800 flex items-center">
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                    AI Safety Alerts
-                  </h3>
-                  <span className="text-[9px] font-black bg-rose-100 text-rose-700 px-2 py-1 rounded uppercase animate-pulse">Critical</span>
-                </div>
+                <h3 className="text-sm font-bold text-rose-800 flex items-center mb-6">
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                  AI Safety Alerts
+                </h3>
                 <div className="space-y-4">
                   {stats.flaggedStudents.map(student => (
                     <div key={student.name} className="p-4 bg-rose-50/50 rounded-2xl border border-rose-100 relative group overflow-hidden">
-                      <div className="flex justify-between items-center relative z-10">
-                        <div>
-                          <div className="text-xs font-black text-rose-900">{student.name}</div>
-                          <div className="text-[10px] text-rose-700 font-bold opacity-70">Risk Factor: {Math.min(student.riskScore, 10)}/10</div>
-                        </div>
-                        <Link to="/incidents" className="bg-white text-rose-600 px-3 py-1.5 rounded-xl text-[10px] font-bold shadow-sm hover:bg-rose-600 hover:text-white transition-all">Action</Link>
+                      <div className="flex justify-between items-center">
+                        <div className="text-xs font-black text-rose-900">{student.name}</div>
+                        <Link to="/incidents" className="bg-white text-rose-600 px-3 py-1.5 rounded-xl text-[10px] font-bold shadow-sm">Action</Link>
                       </div>
-                      <div className="mt-3 w-full bg-rose-200 h-1 rounded-full overflow-hidden">
+                      <div className="mt-3 w-full bg-rose-200 h-1 rounded-full">
                         <div className="bg-rose-600 h-full rounded-full transition-all" style={{ width: `${(student.riskScore / 10) * 100}%` }}></div>
                       </div>
                     </div>
                   ))}
-                  {stats.flaggedStudents.length === 0 && (
-                    <p className="text-xs text-slate-400 italic text-center py-6">All systems reporting optimal safety.</p>
-                  )}
                 </div>
               </div>
 
@@ -368,60 +338,28 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
               </div>
             </>
           )}
-
-          {/* Location Hotspots Widget (Small Card) */}
-          {isStaff && (
-            <div className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm">
-              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest mb-6 text-center">Location Risk</h3>
-              <div className="h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={stats.locationCounts} layout="vertical">
-                    <XAxis type="number" hide />
-                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} width={80} tick={{fill: '#64748b', fontSize: 10, fontWeight: 'bold'}} />
-                    <Tooltip cursor={{fill: '#f8fafc'}} />
-                    <Bar dataKey="count" fill="#3b82f6" radius={[0, 8, 8, 0]} barSize={12} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Quick Action Modal (Revamped) */}
+      {/* Quick Action Modal */}
       {activeQuickAction && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[5000] flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
             <div className={`p-8 ${activeQuickAction.type === IncidentCategory.WELFARE ? 'bg-rose-600' : 'bg-indigo-600'} text-white`}>
               <h3 className="text-2xl font-black">{activeQuickAction.label}</h3>
-              <p className="text-white/80 text-sm mt-1 font-medium">Your submission will be handled with strict confidentiality.</p>
             </div>
             <div className="p-8 space-y-6">
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3">Optional Details</label>
-                <textarea 
-                  rows={4}
-                  value={quickNote}
-                  onChange={(e) => setQuickNote(e.target.value)}
-                  placeholder="Share any details that might help us understand the situation better..."
-                  className="w-full bg-slate-100 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none placeholder:text-slate-400 font-medium"
-                />
-              </div>
+              <textarea 
+                rows={4}
+                value={quickNote}
+                onChange={(e) => setQuickNote(e.target.value)}
+                placeholder="Share any details..."
+                className="w-full bg-slate-100 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+              />
               <div className="flex space-x-4">
-                <button 
-                  onClick={() => setActiveQuickAction(null)}
-                  className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={submitQuickRequest}
-                  disabled={isSubmitting}
-                  className={`flex-1 py-4 text-white font-black rounded-2xl transition-all shadow-lg active:scale-95 ${
-                    activeQuickAction.type === IncidentCategory.WELFARE ? 'bg-rose-600 shadow-rose-100' : 'bg-indigo-600 shadow-indigo-100'
-                  } disabled:opacity-50`}
-                >
-                  {isSubmitting ? 'Sending Request...' : 'Confirm Request'}
+                <button onClick={() => setActiveQuickAction(null)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl">Cancel</button>
+                <button onClick={submitQuickRequest} disabled={isSubmitting} className={`flex-1 py-4 text-white font-black rounded-2xl ${activeQuickAction.type === IncidentCategory.WELFARE ? 'bg-rose-600' : 'bg-indigo-600'} disabled:opacity-50`}>
+                  {isSubmitting ? 'Sending...' : 'Confirm'}
                 </button>
               </div>
             </div>
@@ -431,5 +369,20 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     </div>
   );
 };
+
+// Helper for chart data
+function wellnessTrendData(moods: MoodEntry[]) {
+  return Array.from({ length: 7 }).map((_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    const dateStr = d.toISOString().split('T')[0];
+    const dayMoods = moods.filter(m => m.timestamp.startsWith(dateStr));
+    const avg = dayMoods.length > 0 ? dayMoods.reduce((acc, curr) => acc + curr.moodValue, 0) / dayMoods.length : 3;
+    return {
+      date: dateStr.slice(5),
+      avg: parseFloat(avg.toFixed(1))
+    };
+  });
+}
 
 export default Dashboard;

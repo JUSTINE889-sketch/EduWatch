@@ -18,39 +18,45 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   const [fullName, setFullName] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccess('');
+    setIsLoading(true);
 
-    if (isRegistering) {
-      const newUser: User = {
-        id: Math.random().toString(36).substr(2, 9),
-        email: email.toLowerCase().trim(),
-        fullName,
-        role,
-        isApproved: true,
-      };
-      
-      dbService.addUser(newUser);
-      setSuccess(`Account for ${fullName} is ready! Please sign in below.`);
-      setFullName('');
-      setPassword('');
-      setIsRegistering(false);
-    } else {
-      const users = dbService.getUsers();
-      const user = users.find(u => u.email.toLowerCase() === email.toLowerCase().trim());
-      
-      if (user) {
-        if (!user.isApproved) {
-          setError('Account pending approval by administration.');
-          return;
-        }
-        onLogin(user);
+    try {
+      if (isRegistering) {
+        await dbService.addUser({
+          email: email.toLowerCase().trim(),
+          fullName,
+          role,
+          isApproved: true,
+        });
+        
+        setSuccess(`Account for ${fullName} is ready! Please sign in below.`);
+        setFullName('');
+        setPassword('');
+        setIsRegistering(false);
       } else {
-        setError('User not found. Check your email or create a new account.');
+        const users = await dbService.getUsers();
+        const user = users.find(u => u.email.toLowerCase() === email.toLowerCase().trim());
+        
+        if (user) {
+          if (!user.isApproved) {
+            setError('Account pending approval by administration.');
+            return;
+          }
+          onLogin(user);
+        } else {
+          setError('User not found. Check your email or create a new account.');
+        }
       }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -135,9 +141,10 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
 
           <button
             type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-blue-200 active:scale-95"
+            disabled={isLoading}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-blue-200 active:scale-95 disabled:opacity-50"
           >
-            {isRegistering ? 'Create Account' : 'Sign In'}
+            {isLoading ? 'Processing...' : (isRegistering ? 'Create Account' : 'Sign In')}
           </button>
         </form>
 
@@ -152,12 +159,6 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
           >
             {isRegistering ? 'Already a member? Sign in' : "New to EduWatch? Join now"}
           </button>
-          
-          <div className="pt-6 border-t border-slate-50">
-            <Link to="/report-anonymous" className="text-xs font-bold text-slate-400 hover:text-blue-600 transition-colors uppercase tracking-widest">
-              Submit Anonymous Report
-            </Link>
-          </div>
         </div>
       </div>
     </div>

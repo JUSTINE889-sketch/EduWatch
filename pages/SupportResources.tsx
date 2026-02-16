@@ -22,9 +22,14 @@ const SupportResources: React.FC = () => {
     const fetchRecs = async () => {
       if (!user) return;
       setIsLoading(true);
-      const moods = dbService.getMoods().filter(m => m.userId === user.id);
+      // Fixed: Await getMoods() since it returns a Promise<MoodEntry[]>
+      const allMoods = await dbService.getMoods();
+      const moods = allMoods.filter(m => m.userId === user.id);
       const avgMood = moods.length > 0 ? moods.reduce((a, b) => a + b.moodValue, 0) / moods.length : 3;
-      const recentIncidents = dbService.getIncidents()
+      
+      // Fixed: Await getIncidents() since it returns a Promise<IncidentReport[]>
+      const allIncidents = await dbService.getIncidents();
+      const recentIncidents = allIncidents
         .filter(i => i.reporterId === user.id)
         .slice(0, 3)
         .map(i => i.incidentType);

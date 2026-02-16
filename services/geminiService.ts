@@ -2,7 +2,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { IncidentType, Priority } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+// Fixed: Correct initialization of GoogleGenAI using named parameter and process.env.API_KEY directly.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const getWellnessTip = async () => {
   if (!process.env.API_KEY) return "Take a deep breath. You're doing better than you think.";
