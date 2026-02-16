@@ -1,0 +1,7 @@
+{
+  "name": "EduWatch - Student Welfare & Discipline Support",
+  "description": "A comprehensive Student Welfare and Discipline Support Management System featuring role-based dashboards, intelligent incident analysis, and secure reporting.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
